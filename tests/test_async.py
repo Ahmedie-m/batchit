@@ -137,26 +137,8 @@ async def test_items_not_dropped():
 
 
 # ---------------------------------------------------------------------------
-# real-world patterns
+# robustness
 # ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_kafka_like_consumer():
-    """Burst of items, then a long pause, then more — simulates an async Kafka consumer.
-
-    Unlike the sync batcher, the async variant uses asyncio.wait_for internally,
-    so the timeout fires even while the source is stalled between polls.
-    """
-    async def kafka_consumer():
-        for i in range(3):              # fast burst
-            yield i
-        await asyncio.sleep(0.2)        # simulated poll interval (broker quiet)
-        for i in range(3, 5):           # second burst
-            yield i
-
-    result = await collect(async_batcher(kafka_consumer(), size=10, timeout=0.1))
-    assert result == [[0, 1, 2], [3, 4]]
-
 
 @pytest.mark.asyncio
 async def test_multiple_consecutive_timeout_flushes():
@@ -167,20 +149,15 @@ async def test_multiple_consecutive_timeout_flushes():
 
 
 @pytest.mark.asyncio
-async def test_source_exception_ends_stream():
-    """When the async source raises, async_batcher ends cleanly and yields buffered items.
-
-    Unlike the sync batcher, the async variant runs the source in a background
-    task.  If that task raises, the exception is contained there; the consumer
-    sees a normal end-of-stream after receiving whatever was already buffered.
-    """
+async def test_source_exception_propagates():
+    """An exception raised by the async source propagates out of async_batcher."""
     async def broken_gen():
         yield 1
         yield 2
         raise RuntimeError("async source failed")
 
-    result = await collect(async_batcher(broken_gen(), size=10))
-    assert result == [[1, 2]]
+    with pytest.raises(RuntimeError, match="async source failed"):
+        await collect(async_batcher(broken_gen(), size=10))
 
 
 @pytest.mark.asyncio

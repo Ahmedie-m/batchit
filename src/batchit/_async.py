@@ -8,7 +8,16 @@ from typing import TypeVar
 
 T = TypeVar("T")
 
-_DONE = object()  # sentinel pushed by the producer when the source is exhausted
+_DONE = object()  # sentinel: source exhausted normally
+
+
+class _Error:
+    """Wraps an exception raised by the source so the consumer can re-raise it."""
+
+    __slots__ = ("exc",)
+
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
 
 
 async def async_batcher(
@@ -39,6 +48,7 @@ async def async_batcher(
 
     Raises:
         ValueError: If both *size* and *timeout* are ``None``.
+        Exception: Any exception raised by the source is re-raised by the consumer.
 
     Examples:
         >>> import asyncio
@@ -63,8 +73,9 @@ async def async_batcher(
         try:
             async for item in aiterable:
                 await queue.put(item)
-        finally:
             await queue.put(_DONE)
+        except Exception as exc:
+            await queue.put(_Error(exc))
 
     task = asyncio.create_task(_producer())
     buf: list[T] = []
@@ -99,6 +110,9 @@ async def async_batcher(
                 if buf:
                     yield buf
                 break
+
+            if isinstance(item, _Error):
+                raise item.exc
 
             # First item of a new batch — record deadline.
             if not buf and timeout is not None:
