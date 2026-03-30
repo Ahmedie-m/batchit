@@ -130,6 +130,13 @@ async def test_raises_if_timeout_zero():
 
 
 @pytest.mark.asyncio
+async def test_raises_if_maxsize_negative():
+    with pytest.raises(ValueError, match="maxsize"):
+        async for _ in async_batcher(agen(range(5)), size=2, maxsize=-1):
+            pass
+
+
+@pytest.mark.asyncio
 async def test_items_not_dropped():
     source = list(range(17))
     batches = await collect(async_batcher(agen(source), size=5))
@@ -158,6 +165,32 @@ async def test_source_exception_propagates():
 
     with pytest.raises(RuntimeError, match="async source failed"):
         await collect(async_batcher(broken_gen(), size=10))
+
+
+@pytest.mark.asyncio
+async def test_bounded_queue_yields_all_items():
+    """All items are delivered correctly with a bounded queue (maxsize > 0)."""
+    result = await collect(async_batcher(agen(range(10)), size=3, maxsize=2))
+    assert result == [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
+
+
+@pytest.mark.asyncio
+async def test_bounded_queue_backpressure():
+    """Producer blocks when the queue is full, preventing unbounded memory growth."""
+    produced: list[int] = []
+
+    async def tracked_source():
+        for i in range(8):
+            produced.append(i)
+            yield i
+
+    consumed: list[int] = []
+    async for batch in async_batcher(tracked_source(), size=2, maxsize=2):
+        consumed.extend(batch)
+        # Producer cannot be more than maxsize items ahead of what we have consumed
+        assert len(produced) <= len(consumed) + 2 + 1  # +1 for in-flight item
+
+    assert consumed == list(range(8))
 
 
 @pytest.mark.asyncio

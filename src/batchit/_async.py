@@ -25,6 +25,7 @@ async def async_batcher(
     *,
     size: int | None = None,
     timeout: float | None = None,
+    maxsize: int = 0,
 ) -> AsyncGenerator[list[T], None]:
     """Batch items from *aiterable*, flushing when *size* is reached OR *timeout*
     seconds have elapsed since the first item in the current batch arrived.
@@ -42,12 +43,16 @@ async def async_batcher(
         size: Maximum number of items per batch.  ``None`` means no size limit.
         timeout: Maximum seconds to accumulate a batch (measured from the first
             item).  ``None`` means no time limit.
+        maxsize: Maximum number of items to buffer in the internal queue before
+            the producer blocks.  ``0`` (default) means unbounded.  Set this to
+            apply backpressure when the source can outpace the consumer.
 
     Yields:
         Non-empty ``list`` of items.
 
     Raises:
-        ValueError: If both *size* and *timeout* are ``None``.
+        ValueError: If both *size* and *timeout* are ``None``, or if *maxsize*
+            is negative.
         Exception: Any exception raised by the source is re-raised by the consumer.
 
     Examples:
@@ -66,8 +71,10 @@ async def async_batcher(
         raise ValueError("'size' must be a positive integer.")
     if timeout is not None and timeout <= 0:
         raise ValueError("'timeout' must be a positive number.")
+    if maxsize < 0:
+        raise ValueError("'maxsize' must be a non-negative integer.")
 
-    queue: asyncio.Queue[object] = asyncio.Queue()
+    queue: asyncio.Queue[object] = asyncio.Queue(maxsize=maxsize)
 
     async def _producer() -> None:
         try:

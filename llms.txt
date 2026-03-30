@@ -29,11 +29,12 @@ Synchronous. Works with any `Iterable` — generators, file objects, database cu
 - No threads or background tasks — single-threaded safe
 - Remaining items are always yielded; nothing is silently dropped
 
-### `async_batcher(aiterable, *, size=None, timeout=None) -> AsyncGenerator[list[T], None]`
+### `async_batcher(aiterable, *, size=None, timeout=None, maxsize=0) -> AsyncGenerator[list[T], None]`
 
 Async. Works with any `AsyncIterable`.
 
-- Same parameters as `batcher`
+- Same parameters as `batcher`, plus:
+- `maxsize` — max items to buffer in the internal queue before the producer blocks (`int`, default `0` = unbounded). Set this to apply backpressure when the source outpaces the consumer.
 - Uses `asyncio.wait_for` internally — timeout fires **even when the source stalls** (no items need to arrive)
 - Source exceptions are contained in the producer task; the consumer sees a clean end-of-stream
 

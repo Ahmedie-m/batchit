@@ -93,9 +93,17 @@ The two variants behave differently under a slow or stalled source — know whic
 Yields `list[T]`.  At least one of `size` / `timeout` must be provided.
 Remaining items are always yielded — nothing is silently dropped.
 
-### `async_batcher(aiterable, *, size=None, timeout=None)`
+### `async_batcher(aiterable, *, size=None, timeout=None, maxsize=0)`
 
-Same parameters, accepts `AsyncIterable[T]`, yields `list[T]` asynchronously.
+Same parameters as `batcher`, plus:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `aiterable` | `AsyncIterable[T]` | Any async iterable to batch |
+| `maxsize` | `int` | Max items to buffer internally before the producer blocks. `0` = unbounded (default) |
+
+Accepts `AsyncIterable[T]`, yields `list[T]` asynchronously.  Set `maxsize` to apply
+backpressure when the source can outpace the consumer.
 
 ## Patterns
 
@@ -124,6 +132,18 @@ for batch in batcher(cursor, size=1000):
 ```python
 async for batch in async_batcher(response.content, size=64, timeout=2.0):
     await storage.write(batch)
+```
+
+### Backpressure — bounded queue
+
+If your source can produce faster than the consumer processes, the internal queue
+grows without bound.  Use `maxsize` to cap it — the producer will block naturally
+when the queue is full:
+
+```python
+# Source blocked if more than 200 items are waiting to be batched
+async for batch in async_batcher(fast_source(), size=50, timeout=2.0, maxsize=200):
+    await slow_downstream(batch)
 ```
 
 ### AI / ML pipelines
