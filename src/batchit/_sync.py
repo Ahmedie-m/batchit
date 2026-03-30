@@ -21,10 +21,11 @@ def batcher(
     At least one of *size* or *timeout* must be provided.
 
     The timeout is measured from the moment the **first item** in a batch is
-    received.  This means a slow upstream source naturally triggers time-based
-    flushes without any threading or background tasks — making the function
-    safe to use in any single-threaded context (Kafka consumers, DB cursors,
-    file readers, etc.).
+    received.  The check runs **after** each item is appended, so the item
+    whose arrival reveals that the deadline has passed is included in the
+    current (flushing) batch — not deferred to the next one.  No threads or
+    background tasks are involved; this makes the function safe in any
+    single-threaded context (Kafka consumers, DB cursors, file readers, etc.).
 
     Args:
         iterable: Any iterable to batch.

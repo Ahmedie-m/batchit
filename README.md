@@ -57,10 +57,6 @@ for batch in batcher(db_cursor, size=200, timeout=10.0):
     write_to_s3(batch)
 ```
 
-The timeout is measured from the **first item** in the current batch, so no
-threads or background tasks are needed.  Works with any iterable: generators,
-Kafka consumers, database cursors, file readers.
-
 ### Async — `async_batcher`
 
 ```python
@@ -70,9 +66,19 @@ async for batch in async_batcher(async_source, size=100, timeout=5.0):
     await db.bulk_insert(batch)
 ```
 
-The async variant uses `asyncio.wait_for` internally, so it flushes a batch
-even when the upstream source **stalls** — no items need to arrive to trigger
-the timeout.
+## Timeout semantics
+
+The two variants behave differently under a slow or stalled source — know which you need:
+
+| | `batcher` (sync) | `async_batcher` (async) |
+|---|---|---|
+| **How timeout fires** | Checked on each item arrival | Fires independently via `asyncio.wait_for` |
+| **Stalled source** | Waits until the next item arrives, then flushes | Flushes after *T* seconds even with no new items |
+| **Triggering item** | Included in the flushing batch | Starts the next batch |
+| **Threading** | None — single-threaded safe | asyncio event loop only |
+| **Source exception** | Propagates immediately | Propagates to consumer |
+
+**Rule of thumb:** use `batcher` for sync iterables where the source drives timing (Kafka poll loops, DB cursors). Use `async_batcher` when you need the timeout to fire independently of item delivery (WebSocket streams, async queues, idle-timeout flushing).
 
 ## API
 
@@ -82,40 +88,83 @@ the timeout.
 |-----------|------|-------------|
 | `iterable` | `Iterable[T]` | Any iterable to batch |
 | `size` | `int \| None` | Max items per batch |
-| `timeout` | `float \| None` | Max seconds per batch |
+| `timeout` | `float \| None` | Max seconds per batch, measured from the first item |
 
 Yields `list[T]`.  At least one of `size` / `timeout` must be provided.
-Remaining items at end of the iterable are always yielded (no silent drops).
+Remaining items are always yielded — nothing is silently dropped.
 
 ### `async_batcher(aiterable, *, size=None, timeout=None)`
 
 Same parameters, accepts `AsyncIterable[T]`, yields `list[T]` asynchronously.
 
-## Real-world patterns
+## Patterns
 
-**Kafka consumer with time-based flush:**
+### Kafka consumer
+
 ```python
 from kafka import KafkaConsumer
 from batchit import batcher
 
-consumer = KafkaConsumer("my-topic")
+consumer = KafkaConsumer("events")
 for batch in batcher(consumer, size=500, timeout=10.0):
     db.bulk_insert([msg.value for msg in batch])
     consumer.commit()
 ```
 
-**Database cursor in chunks:**
+### Database cursor
+
 ```python
 cursor.execute("SELECT * FROM events")
 for batch in batcher(cursor, size=1000):
     warehouse.insert_many(batch)
 ```
 
-**Async HTTP stream:**
+### Async HTTP / WebSocket stream
+
 ```python
 async for batch in async_batcher(response.content, size=64, timeout=2.0):
     await storage.write(batch)
 ```
+
+### AI / ML pipelines
+
+Batch embedding requests to stay within API rate limits and maximise throughput:
+
+```python
+from batchit import async_batcher
+
+async for batch in async_batcher(document_stream(), size=96, timeout=2.0):
+    embeddings = await embed(batch)          # one API call per batch
+    await vector_db.upsert(embeddings)
+```
+
+Batch LLM inference over a large dataset:
+
+```python
+from batchit import batcher
+
+for batch in batcher(prompts, size=20):
+    responses = llm.generate(batch)          # single batched call
+    results.extend(responses)
+```
+
+Stream model outputs to a downstream consumer without accumulating everything in memory:
+
+```python
+async for batch in async_batcher(model.stream_predict(inputs), size=50, timeout=1.0):
+    await sink.write(batch)
+```
+
+## Tests
+
+The test suite is organised by use case:
+
+| File | What it covers |
+|---|---|
+| `tests/test_sync.py` | Core sync batcher behaviour |
+| `tests/test_async.py` | Core async batcher behaviour |
+| `tests/test_kafka.py` | Kafka consumer patterns (sync + async) |
+| `tests/test_db.py` | Database cursor and file iterator patterns |
 
 ## Contributing
 

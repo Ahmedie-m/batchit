@@ -25,7 +25,8 @@ Synchronous. Works with any `Iterable` — generators, file objects, database cu
 - `size` — max items per batch (`int`, optional)
 - `timeout` — max seconds to accumulate a batch, measured from the **first item** (`float`, optional)
 - At least one of `size` / `timeout` is required, or `ValueError` is raised
-- Timeout is checked **on item arrival** — no threads, no background tasks
+- Timeout is checked **after each item is appended** — the item whose arrival reveals the deadline has passed is included in the flushing batch, not deferred to the next
+- No threads or background tasks — single-threaded safe
 - Remaining items are always yielded; nothing is silently dropped
 
 ### `async_batcher(aiterable, *, size=None, timeout=None) -> AsyncGenerator[list[T], None]`
@@ -75,7 +76,8 @@ async for batch in async_batcher(websocket_stream, size=100, timeout=2.0):
 | Scenario | sync `batcher` | async `async_batcher` |
 |---|---|---|
 | Timeout fires when source stalls | No — only on item arrival | Yes — uses `asyncio.wait_for` |
-| Source exception propagates | Yes | No — consumer sees clean end |
+| Triggering item placement | Included in flushing batch | Starts the next batch |
+| Source exception propagates | Yes | Yes (re-raised by consumer) |
 | Thread safety | Single-threaded only | asyncio event loop only |
 | Remaining items yielded | Always | Always |
 
